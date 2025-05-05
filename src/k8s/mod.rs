@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use colored::*;
-use k8s_openapi::api::core::v1::Pod;
+use k8s_openapi::api::core::v1::{Container, Pod, PodSpec};
 use kube::{api::ListParams, Api, Client};
 use prettytable::Table;
+use prettytable::{Cell, Row};
 
 #[derive(Debug)]
 pub struct PodImage {
@@ -135,6 +136,99 @@ impl K8sClient {
 
         Ok(all_images)
     }
+
+    pub async fn get_pods_with_registry(
+        &self,
+        namespace: &str,
+        node_name: Option<&str>,
+        registry_filter: Option<&str>,
+        all_namespaces: bool,
+    ) -> Result<Vec<Pod>> {
+        let mut field_selectors = String::new();
+
+        if let Some(node) = node_name {
+            field_selectors.push_str(&format!("spec.nodeName={}", node));
+        }
+
+        let list_params = if !field_selectors.is_empty() {
+            ListParams::default().fields(&field_selectors)
+        } else {
+            ListParams::default()
+        };
+
+        let pods_api: Api<Pod> = if all_namespaces || node_name.is_some() {
+            Api::all(self.client.clone())
+        } else {
+            Api::namespaced(self.client.clone(), namespace)
+        };
+
+        let pods_list = pods_api.list(&list_params).await.context(format!(
+            "Failed to list pods with params: {:?}",
+            list_params
+        ))?;
+
+        // Perform client-side filtering for registry
+        let filtered_pods: Vec<Pod> =
+            filter_pods_by_registry_criteria(&pods_list.items, registry_filter);
+
+        // Apply client-side node name filtering *after* registry filtering if node_name was specified.
+        let filtered_pods: Vec<Pod> = if let Some(node) = node_name {
+            filtered_pods
+                .into_iter()
+                .filter(|pod| pod.spec.as_ref().and_then(|s| s.node_name.as_deref()) == Some(node))
+                .collect()
+        } else {
+            filtered_pods
+        };
+
+        Ok(filtered_pods)
+    }
+}
+
+pub fn filter_pods_by_registry_criteria(pods: &[Pod], registry_filter: Option<&str>) -> Vec<Pod> {
+    if registry_filter.is_none() {
+        // No filter needed, return all pods cloned
+        return pods.to_vec();
+    }
+
+    let reg_filter = registry_filter.unwrap(); // Safe unwrap due to check above
+
+    pods.iter()
+        .filter(|pod| {
+            let pod_spec = match pod.spec.as_ref() {
+                Some(spec) => spec,
+                None => return false, // Skip pods without spec
+            };
+
+            let mut found_match = false;
+
+            // Check standard containers
+            for container in &pod_spec.containers {
+                if let Some(image) = &container.image {
+                    if extract_registry(image) == reg_filter {
+                        found_match = true;
+                        break;
+                    }
+                }
+            }
+
+            // Check init containers if no match found yet
+            if !found_match {
+                if let Some(init_containers) = &pod_spec.init_containers {
+                    for container in init_containers {
+                        if let Some(image) = &container.image {
+                            if extract_registry(image) == reg_filter {
+                                found_match = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            found_match
+        })
+        .cloned() // Clone the pods that match the filter
+        .collect()
 }
 
 pub fn extract_registry(image: &str) -> String {
@@ -337,4 +431,95 @@ pub fn display_pod_images(
 
     table.printstd();
     println!("\n{}", "=".repeat(80));
+}
+
+pub fn display_pods(pods: &[Pod], show_namespace: bool, show_node: bool, show_registry: bool) {
+    if pods.is_empty() {
+        println!("{}", "No pods found matching criteria.".yellow());
+        return;
+    }
+
+    let mut table = Table::new();
+    let mut headers = Vec::new();
+
+    if show_namespace {
+        headers.push(Cell::new("NAMESPACE").style_spec("bFg"));
+    }
+    headers.push(Cell::new("POD NAME").style_spec("bFg"));
+    if show_node {
+        headers.push(Cell::new("NODE").style_spec("bFg"));
+    }
+    headers.push(Cell::new("CONTAINER").style_spec("bFg"));
+    headers.push(Cell::new("IMAGE").style_spec("bFg"));
+    if show_registry {
+        headers.push(Cell::new("REGISTRY").style_spec("bFg"));
+    }
+
+    table.set_titles(Row::new(headers));
+
+    for pod in pods {
+        let metadata = pod.metadata.clone();
+        let spec: Option<&PodSpec> = pod.spec.as_ref();
+
+        let namespace = metadata.namespace.as_deref().unwrap_or("N/A");
+        let pod_name = metadata.name.as_deref().unwrap_or("N/A");
+        let node_name = spec.and_then(|s| s.node_name.as_deref()).unwrap_or("N/A");
+
+        // Corrected container extraction
+        let containers: Vec<Container> = spec
+            .map(|s| s.containers.clone()) // s is &PodSpec, s.containers is Vec<Container>, clone it
+            .unwrap_or_default(); // Returns Vec::new() if spec was None
+
+        // Corrected init_container extraction (init_containers is Option<Vec<Container>>)
+        let init_containers: Vec<Container> = spec
+            .and_then(|s| s.init_containers.clone()) // s is &PodSpec, s.init_containers is Option<Vec<Container>>, clone preserves Option
+            .unwrap_or_default(); // Returns Vec::new() if spec was None or init_containers was None
+
+        // Process standard containers
+        for container in &containers {
+            let mut row_cells = Vec::new();
+            let image = container.image.as_deref().unwrap_or("N/A");
+            let registry = extract_registry(image);
+
+            if show_namespace {
+                row_cells.push(Cell::new(namespace));
+            }
+            row_cells.push(Cell::new(pod_name).style_spec("b"));
+            if show_node {
+                row_cells.push(Cell::new(node_name));
+            }
+            row_cells.push(Cell::new(&container.name));
+            row_cells.push(Cell::new(image));
+            if show_registry {
+                row_cells.push(Cell::new(&registry));
+            }
+
+            table.add_row(Row::new(row_cells));
+        }
+
+        // Process init containers
+        for container in &init_containers {
+            let mut row_cells = Vec::new();
+            let image = container.image.as_deref().unwrap_or("N/A");
+            let registry = extract_registry(image);
+
+            if show_namespace {
+                row_cells.push(Cell::new(namespace));
+            }
+            row_cells.push(Cell::new(pod_name).style_spec("b"));
+            if show_node {
+                row_cells.push(Cell::new(node_name));
+            }
+            row_cells.push(Cell::new(&format!("{} (init)", container.name)).style_spec("Fi"));
+            row_cells.push(Cell::new(image));
+            if show_registry {
+                row_cells.push(Cell::new(&registry));
+            }
+
+            table.add_row(Row::new(row_cells));
+        }
+    }
+
+    println!();
+    table.printstd();
 }

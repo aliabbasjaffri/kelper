@@ -38,4 +38,27 @@ pub enum GetResource {
         #[arg(short = 'A', long = "all-namespaces", conflicts_with = "namespace")]
         all_namespaces: bool,
     },
+    /// Get pods based on node and/or registry
+    Pods {
+        /// Kubernetes namespace to query
+        #[arg(
+            short,
+            long,
+            default_value = "default",
+            conflicts_with = "all_namespaces"
+        )]
+        namespace: String,
+
+        /// Node name to filter pods by
+        #[arg(short = 'N', long)]
+        node: Option<String>,
+
+        /// Filter pods by container image registry
+        #[arg(short = 'R', long)]
+        registry: Option<String>,
+
+        /// Consider pods in all namespaces
+        #[arg(short = 'A', long, conflicts_with = "namespace")]
+        all_namespaces: bool,
+    },
 }

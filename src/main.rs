@@ -2,7 +2,7 @@ use anyhow::Result;
 use colored::*;
 use kelper::{
     cli::{Args, Commands, GetResource},
-    k8s::{display_pod_images, K8sClient},
+    k8s::{display_pod_images, display_pods, K8sClient},
 };
 
 #[tokio::main]
@@ -67,6 +67,38 @@ async fn main() -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("\n{} {}", "Error retrieving pod images:".red().bold(), e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            GetResource::Pods {
+                namespace,
+                node,
+                registry,
+                all_namespaces,
+            } => {
+                // Call the new function to get pods based on criteria
+                match client
+                    .get_pods_with_registry(
+                        &namespace,
+                        node.as_deref(),
+                        registry.as_deref(),
+                        all_namespaces,
+                    )
+                    .await
+                {
+                    Ok(pods) => {
+                        if pods.is_empty() {
+                            println!("\n{}", "No pods found matching your criteria.".yellow());
+                        } else {
+                            // Display the pods (implementation needed in k8s module)
+                            // For now, just print the count
+                            println!("\nFound {} pods matching criteria:", pods.len());
+                            display_pods(&pods, all_namespaces, node.is_none(), registry.is_some());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("\n{} {}", "Error retrieving pods:".red().bold(), e);
                         std::process::exit(1);
                     }
                 }

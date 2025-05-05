@@ -1,6 +1,6 @@
 use k8s_openapi::api::core::v1::{Container, Pod, PodSpec};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
-use kelper::k8s::{extract_registry, process_pod, split_image};
+use kelper::k8s::{extract_registry, filter_pods_by_registry_criteria, process_pod, split_image};
 
 fn create_test_pod(name: &str, namespace: &str, containers: Vec<Container>) -> Pod {
     Pod {
@@ -270,4 +270,89 @@ fn test_process_pod_with_multiple_registries() {
     assert_eq!(images[1].registry, "gcr.io");
     assert_eq!(images[2].registry, "quay.io");
     assert_eq!(images[3].registry, "my-registry:5000");
+}
+
+#[test]
+fn test_filter_pods_by_registry_logic() {
+    let pod1 = create_test_pod(
+        "pod1",
+        "default",
+        vec![
+            create_test_container("nginx", "nginx:latest"),
+            create_test_container("etcd", "quay.io/coreos/etcd:v3.3.0"),
+        ],
+    );
+
+    let pod2 = create_test_pod(
+        "pod2",
+        "default",
+        vec![
+            create_test_container("redis", "redis:6.2"),
+            create_test_container("nginx", "docker.io/nginx:latest"),
+        ],
+    );
+
+    let pod3 = create_test_pod(
+        "pod3",
+        "default",
+        vec![
+            create_test_container("etcd", "quay.io/coreos/etcd:v3.3.0"),
+            create_test_container("redis", "redis:6.2"),
+        ],
+    );
+
+    let pod4 = create_test_pod(
+        "pod4",
+        "default",
+        vec![create_test_container("nginx", "my-reg:5000/nginx:1.21")],
+    );
+
+    let pod5 = create_test_pod(
+        "pod5",
+        "default",
+        vec![create_test_container("nginx", "docker.io/nginx:latest")],
+    );
+
+    let all_pods = vec![pod1, pod2, pod3, pod4, pod5];
+
+    // Filter by "quay.io"
+    let quay_pods = filter_pods_by_registry_criteria(&all_pods, Some("quay.io"));
+    assert_eq!(quay_pods.len(), 2);
+    assert!(quay_pods
+        .iter()
+        .any(|p| p.metadata.name == Some("pod1".to_string())));
+    assert!(quay_pods
+        .iter()
+        .any(|p| p.metadata.name == Some("pod3".to_string())));
+
+    // Filter by "docker.io"
+    let docker_pods = filter_pods_by_registry_criteria(&all_pods, Some("docker.io"));
+    assert_eq!(docker_pods.len(), 4);
+    assert!(docker_pods
+        .iter()
+        .any(|p| p.metadata.name == Some("pod1".to_string())));
+    assert!(docker_pods
+        .iter()
+        .any(|p| p.metadata.name == Some("pod2".to_string())));
+    assert!(docker_pods
+        .iter()
+        .any(|p| p.metadata.name == Some("pod3".to_string())));
+    assert!(docker_pods
+        .iter()
+        .any(|p| p.metadata.name == Some("pod5".to_string())));
+
+    // Filter by "my-reg:5000"
+    let myreg_pods = filter_pods_by_registry_criteria(&all_pods, Some("my-reg:5000"));
+    assert_eq!(myreg_pods.len(), 1);
+    assert!(myreg_pods
+        .iter()
+        .any(|p| p.metadata.name == Some("pod4".to_string())));
+
+    // Filter by a non-existent registry
+    let none_pods = filter_pods_by_registry_criteria(&all_pods, Some("nonexistent.io"));
+    assert_eq!(none_pods.len(), 0);
+
+    // No filter (should return all pods)
+    let no_filter_pods = filter_pods_by_registry_criteria(&all_pods, None);
+    assert_eq!(no_filter_pods.len(), 5);
 }

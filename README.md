@@ -67,6 +67,19 @@ kelper get images -N node-name -p pod-name
 kelper get images --all-namespaces
 ```
 
+### Get pods using image from a given registry
+
+```bash
+### List pods with a specific registry
+kelper get pods --registry "docker.io" --namespace kube-system
+
+### List pods with a specific registry in a Node
+kelper get pods --registry "quay.io" --node node-name
+
+### List all pods with a specific registry
+kelper get pods --registry "quay.io" --all-namespaces
+```
+
 Kelper displays information in a clean tabular format:
 
 ```
