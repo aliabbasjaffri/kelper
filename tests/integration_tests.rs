@@ -83,3 +83,24 @@ async fn test_get_pod_images_with_pod_and_all_namespaces() -> Result<()> {
     assert!(matches!(result, Err(e) if e.downcast_ref::<K8sError>().is_some()));
     Ok(())
 }
+
+#[tokio::test]
+async fn test_get_unique_registries() -> Result<()> {
+    let client = K8sClient::new().await?;
+    let result = client.get_unique_registries("default", true).await;
+
+    match result {
+        Ok(registries) => {
+            for registry in registries {
+                assert!(!registry.is_empty());
+            }
+        }
+        Err(e) => {
+            assert!(matches!(
+                e.downcast_ref::<K8sError>(),
+                Some(K8sError::ResourceNotFound(_))
+            ));
+        }
+    }
+    Ok(())
+}

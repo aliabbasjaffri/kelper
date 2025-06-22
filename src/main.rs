@@ -1,6 +1,9 @@
 use anyhow::Context;
 use clap::Parser;
-use kelper::{display_pod_images, logging, Args, Commands, GetImages, K8sClient, KelperResult};
+use kelper::{
+    display_pod_images, display_registries, logging, Args, Commands, GetImages, K8sClient,
+    KelperResult,
+};
 use tracing::{debug, info, instrument, warn};
 
 /// Main entry point for the Kelper application
@@ -71,6 +74,36 @@ async fn process_commands(args: Args, client: K8sClient) -> KelperResult<()> {
                     info!(
                         count = pod_images.len(),
                         "Successfully displayed pod images"
+                    );
+                }
+            }
+            GetImages::Registries {
+                namespace,
+                all_namespaces,
+                output,
+                ..
+            } => {
+                debug!(
+                    namespace = %namespace,
+                    all_namespaces = %all_namespaces,
+                    output = ?output,
+                    "Processing get registries command"
+                );
+
+                let registries = client
+                    .get_unique_registries(&namespace, all_namespaces)
+                    .await
+                    .context("Failed to retrieve registries")?;
+
+                if registries.is_empty() {
+                    warn!("No registries found in the specified namespace(s)");
+                } else {
+                    debug!(output = ?output, "Displaying registries");
+                    display_registries(&registries, &output)
+                        .context("Failed to display registries")?;
+                    info!(
+                        count = registries.len(),
+                        "Successfully displayed registries"
                     );
                 }
             }

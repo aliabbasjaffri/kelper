@@ -274,6 +274,68 @@ impl K8sClient {
 
         true
     }
+
+    /// Get unique container image registries used in the cluster
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The namespace to search in
+    /// * `all_namespaces` - Whether to search in all namespaces
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Vec<String>>` - List of unique registries or an error
+    #[instrument(skip(self), fields(
+        namespace = %namespace,
+        all_namespaces = %all_namespaces
+    ))]
+    pub async fn get_unique_registries(
+        &self,
+        namespace: &str,
+        all_namespaces: bool,
+    ) -> Result<Vec<String>> {
+        debug!(
+            namespace = %namespace,
+            all_namespaces = %all_namespaces,
+            "Fetching unique registries"
+        );
+
+        let pods = self.get_pods_api(namespace, all_namespaces, None)?;
+        let pods_list = pods
+            .list(&Default::default())
+            .await
+            .context("Failed to list pods")?;
+
+        debug!("Found {} pods", pods_list.items.len());
+
+        if pods_list.items.is_empty() {
+            let resource = format!("pods in namespace {}", namespace);
+            return Err(K8sError::ResourceNotFound(resource).into());
+        }
+
+        let mut registries = std::collections::HashSet::new();
+        for pod in pods_list {
+            if !Self::should_process_pod(&pod, all_namespaces, None, None) {
+                continue;
+            }
+
+            for container in pod.spec.unwrap_or_default().containers {
+                if let Some(image) = container.image {
+                    let registry = extract_registry(&image);
+                    registries.insert(registry);
+                }
+            }
+        }
+
+        let mut registries_vec: Vec<String> = registries.into_iter().collect();
+        registries_vec.sort();
+
+        info!(
+            total_registries = registries_vec.len(),
+            "Successfully retrieved unique registries"
+        );
+        Ok(registries_vec)
+    }
 }
 
 /// Extract the registry from a container image reference

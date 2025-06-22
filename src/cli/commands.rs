@@ -51,6 +51,30 @@ pub enum GetImages {
         #[arg(long = "kubeconfig")]
         kubeconfig: Option<PathBuf>,
     },
+
+    /// List all unique container image registries used in the cluster
+    Registries {
+        /// Kubernetes namespace to query (defaults to "default")
+        #[arg(
+            short,
+            long,
+            default_value = "default",
+            conflicts_with = "all_namespaces"
+        )]
+        namespace: String,
+
+        /// Query pods across all namespaces
+        #[arg(short = 'A', long = "all-namespaces", conflicts_with = "namespace")]
+        all_namespaces: bool,
+
+        /// Output format (default: normal, wide: shows additional columns)
+        #[arg(short = 'o', long = "output", default_value = "normal")]
+        output: OutputFormat,
+
+        /// Path to kubeconfig file (default: ~/.kube/config)
+        #[arg(long = "kubeconfig")]
+        kubeconfig: Option<PathBuf>,
+    },
 }
 
 impl GetImages {
@@ -61,7 +85,9 @@ impl GetImages {
     /// * `Option<PathBuf>` - The path to the kubeconfig file if specified
     pub fn get_kubeconfig_path(&self) -> Option<PathBuf> {
         match self {
-            GetImages::Images { kubeconfig, .. } => kubeconfig.clone(),
+            GetImages::Images { kubeconfig, .. } | GetImages::Registries { kubeconfig, .. } => {
+                kubeconfig.clone()
+            }
         }
     }
 
@@ -72,7 +98,9 @@ impl GetImages {
     /// * `&str` - The namespace to query
     pub fn get_namespace(&self) -> &str {
         match self {
-            GetImages::Images { namespace, .. } => namespace,
+            GetImages::Images { namespace, .. } | GetImages::Registries { namespace, .. } => {
+                namespace
+            }
         }
     }
 
@@ -83,7 +111,8 @@ impl GetImages {
     /// * `bool` - True if all namespaces should be queried
     pub fn is_all_namespaces(&self) -> bool {
         match self {
-            GetImages::Images { all_namespaces, .. } => *all_namespaces,
+            GetImages::Images { all_namespaces, .. }
+            | GetImages::Registries { all_namespaces, .. } => *all_namespaces,
         }
     }
 }
