@@ -162,3 +162,30 @@ pub fn strip_registry(image_name: &str, registry: &str) -> String {
         .unwrap_or(image_name)
         .to_string()
 }
+
+/// Display a list of container image registries in the specified format
+///
+/// # Arguments
+///
+/// * `registries` - List of registry URLs to display
+/// * `_output_format` - Format to display the registries in (currently unused)
+///
+/// # Returns
+///
+/// * `Result<()>` - Success or error
+pub fn display_registries(registries: &[String], _output_format: &OutputFormat) -> Result<()> {
+    if registries.is_empty() {
+        warn!("No registries found");
+        return Ok(());
+    }
+
+    let mut table = create_table()?;
+    table.add_row(Row::new(vec![Cell::new("CONTAINER REGISTRY")]));
+
+    for registry in registries {
+        table.add_row(Row::new(vec![Cell::new(registry)]));
+    }
+
+    table.printstd();
+    Ok(())
+}
